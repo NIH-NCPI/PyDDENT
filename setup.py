@@ -9,7 +9,7 @@ req_file = root_dir / "requirements.txt"
 requirements = req_file.open().read().split("\n")
 
 setup(
-    name='PyDent',
+    name='PyDDENT',
     version=ddent.__version__,
     setup_requires=["setuptools_scm"],
     description=f'PyDDENT {ddent.__version__}',
