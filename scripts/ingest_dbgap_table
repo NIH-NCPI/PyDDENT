@@ -1,0 +1,145 @@
+#!/usr/bin/env python
+
+from pathlib import Path
+from ncpi_fhir_client.fhir_client import FhirClient
+from ncpi_fhir_client import fhir_auth
+from yaml import safe_load
+import sys
+from argparse import ArgumentParser, FileType
+import re
+from bs4 import BeautifulSoup
+import requests
+
+from ddent.dbgap import transform_to_codesystem
+from ddent.ddent import transform_dd_codesystem
+
+import pdb
+
+ddregx = re.compile(r'.data_dict.xml')
+idregx = re.compile(r'phs[0-9]+.v[0-9]+.p[0-9]+')
+
+def example_config(writer, auth_type=None):
+    """Returns a block of text containing one or all possible auth modules example configurations"""
+
+    modules = fhir_auth.get_modules()
+    print(
+        f"""# Example Hosts Configuration.
+# 
+# This is a basic yaml file (yaml.org) where each root level tag represents a 
+# system "name" and it's children's keys represent key/values to assign to a 
+# host configuration which includes the authentication details.
+#
+# All host entries should have the following key/values:
+# host_desc             - This is just a short description which can be used
+#                         for log names or whatnot
+# target_service_url    - This is the URL associated with the actual API 
+# auth_type             - This is the module name for the authentication used
+#                         by the specified host
+#
+# Please note that there can be multiple hosts that use the same authentication
+# mechanism. Users must ensure that each host has a unique "key" """,
+        file=writer,
+    )
+    for key in modules.keys():
+        if auth_type is None or auth_type == key:
+            other_entries = {
+                "host_desc": f"Example {key}",
+                "target_service_url": "https://example.fhir.server/R4/fhir",
+            }
+
+            modules[key].example_config(writer, other_entries)
+
+
+if __name__ == "__main__":
+    host_config_filename = Path("fhir_hosts")
+
+    if not host_config_filename.is_file() or host_config_filename.stat().st_size == 0:
+        example_config(sys.stdout)
+        sys.stderr.write(
+            f"""
+A valid host configuration file, fhir_hosts, must exist in cwd and was not 
+found. Example configuration has been written to stout providing examples 
+for each of the auth types currently supported.\n"""
+        )
+        sys.exit(1)
+
+    host_config = safe_load(host_config_filename.open("rt"))
+    # Just capture the available environments to let the user
+    # make the selection at runtime
+    env_options = sorted(host_config.keys())
+    
+    parser = ArgumentParser(
+        description="Transform a DbGAP dataset table dictionary into a FHIR CodeSystem, then transform that into ConceptMaps."
+    )
+    parser.add_argument(
+        "-e",
+        "--env",
+        choices=env_options,
+        default=env_options[0],
+        help=f"Remote configuration to be used to access the FHIR server",
+    )
+    parser.add_argument(
+        "--example_cfg",
+        action="store_true",
+        help="Write example configuration to stdout and exit. ",
+    )
+
+    parser.add_argument(
+        "--id",
+        type=str,
+        required=True,
+        help="One or more DbGAP Accession IDs to ingest. (ex. phs000888.v1.p1) "
+    )
+
+    parser.add_argument(
+        "--title",
+        type=str, 
+        required=True,
+        help="Provide a title for this study (until I figure out an easy way to get it)"
+    )
+
+    parser.add_argument(
+        "--nlp",
+        type=str,
+        default="http://localhost:8080",
+        help="Endpoint to the NLP API"
+    )
+    args = parser.parse_args()
+    if args.example_cfg:
+        example_config(sys.stdout)
+        sys.exit(1)
+
+    fhir_client = FhirClient(host_config[args.env])
+
+    # For now, we aren't aggregating the tables into a singular code system
+    #codesystem = None
+
+    #pdb.set_trace()
+    if idregx.search(args.id) is not None:
+        study_id = args.id.split(".")[0]
+        title = args.title
+        desc = "Study Description TBD"
+        url = f"https://ftp.ncbi.nlm.nih.gov/dbgap/studies/{study_id}/{args.id}/pheno_variable_summaries/"
+        response = requests.get(url)
+        if response.status_code == 200:
+            codesystems = []
+            page_content = BeautifulSoup(response.content, "html.parser")
+            for anchor in page_content.find_all("a"):
+                if ddregx.search(anchor.text) is not None:
+                    xml = f"{url}/{anchor.text}"
+                    print(xml)
+
+                    codesystem = transform_to_codesystem(xml)
+                    codesystems.append(codesystem)
+            # Call DDent transformation on the codesystem, this will load the codesystem
+            # we pass into FHIR and then transform it into a CUI CS and a pair of ValueSets
+            # which will be subsequently loaded along with the ConceptMap
+            if len(codesystems) > 0:
+                transform_dd_codesystem(args.id, title, desc, codesystems, args.nlp, fhir_client)
+        else:
+            print(f"There was a problem retrieving study data at the URL: {url}")
+    else:
+        sys.stderr.write("Malformed study ID: {id}. Skipping that one\n")
+
+
+
