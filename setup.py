@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 from pathlib import Path
 import ddent
 
-root_dir = Path.cwd()
+root_dir = os.path.dirname(os.path.abspath(__file__))
 req_file = root_dir / "requirements.txt"
 
 requirements = req_file.open().read().split("\n")
