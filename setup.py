@@ -3,10 +3,10 @@ from setuptools import setup, find_packages
 from pathlib import Path
 import ddent
 
-root_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = Path(__file__).parent
 req_file = root_dir / "requirements.txt"
 
-requirements = req_file.open().read().split("\n")
+requirements = req_file.open().read().splitlines()
 
 setup(
     name='PyDDENT',
